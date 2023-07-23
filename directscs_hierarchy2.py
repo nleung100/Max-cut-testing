@@ -25,7 +25,7 @@ def mat(s):
     return S
 
 # Setting up initial data of problem
-n = 15
+n = 30
 nc2 = math.comb(n,2)
 nc4 = math.comb(n,4)
 
@@ -40,7 +40,7 @@ monomials = [[]]
 for i in range(1,n+1):
     for j in range(i+1,n+1):
         monomials.append([i,j])
-
+print(1)
 # Assigning an order to these monomials
 order = {}
 for i in range(1,n+1):
@@ -51,13 +51,13 @@ for i in range(1,n+1):
         for k in range(j+1,n+1):
             for l in range(k+1,n+1):
                 order[(i,j,k,l)] = len(order)+1
-
+print(2)
 # Vector b in Ax + b = s constraint/A_0 matrix in LMI form (see required scs input format)
 B = np.identity(dim)
 b = vec(B)
-
+print(3)
 # Constructing A_1, ..., A_k matrices in LMI form
-matrices = [np.zeros((dim,dim)) for _ in range(tot+1)]
+matrices = [sparse.dok_matrix((dim,dim)) for _ in range(tot+1)]
 matrices[0] = B
 for i in range(dim):
     for j in range(i+1,dim):
@@ -66,26 +66,25 @@ for i in range(dim):
             p = temp[0]
             q = temp[1]
             index = int((p - 1)*n - p*(p-1)/2 + q - p)
-            matrices[index][i][j] = 1
-            matrices[index][j][i] = 1
+            matrices[index][i,j] = 1
+            matrices[index][j,i] = 1
         if len(temp) == 4:
             p = temp[0]
             q = temp[1]
             r = temp[2]
             s = temp[3]
             index = order[(p,q,r,s)]
-            matrices[index][i][j] = 1
-            matrices[index][j][i] = 1
+            matrices[index][i,j] = 1
+            matrices[index][j,i] = 1
+print(4)
 
 # Converting these matrices to vector form (see required scs input format)
-vectors = [np.zeros(math.comb(dim+1,2)) for _ in range(tot)]
+vectors = [sparse.dok_matrix((math.comb(dim+1,2),1)) for _ in range(tot)]
 for i in range(tot):
-    vectors[i] = vec(matrices[i+1]).reshape(-1,1)
-result = np.hstack(vectors)
+    vectors[i] = sparse.csc_matrix(vec(matrices[i+1].toarray()).reshape(-1,1))
+A = sparse.csc_matrix(-sparse.hstack(vectors))
 
-sparse_result = sparse.csc_matrix(result)
-A = sparse.csc_matrix(-np.hstack(vectors))
-
+print(5)
 # Constructing cost vector c (actually -c since scs minimises and we want to maximise - see required scs input format)
 c = np.zeros(tot)
 for tuple, index in order.items():
@@ -94,7 +93,7 @@ for tuple, index in order.items():
         j = tuple[1]
         c[index - 1] = 2*L[i-1][j-1]
 c = np.hstack([-c])
-
+print(6)
 # No quadratic part in objective function for this problem
 P = None
 
