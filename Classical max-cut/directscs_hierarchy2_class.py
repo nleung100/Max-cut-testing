@@ -3,6 +3,9 @@ import numpy as np
 from scipy import sparse
 import math
 
+# Setting up initial data and useful functions
+
+# NB for a monomial with word of length 1 e.g. chi_1, input must be (1,)
 class Monomial():
     def __init__(self, word: tuple):
         self.word = word
@@ -12,7 +15,8 @@ def symdif(mon1: Monomial, mon2: Monomial):
     resword = tuple(sorted(set(mon1word) ^ set(mon2word)))
     return Monomial(resword)
 
-class initialData():
+# Preliminary data for problem
+class InitialData():
     def __init__(self, n, L=None):
         self.n = n
         if L is not None:
@@ -24,8 +28,8 @@ class initialData():
         self.dim = int(1 + n*(n-1)/2)
         self.tot = int(n*(n-1)/2 + n*(n-1)*(n-2)*(n-3)/24)
 
-class Basis():
-    def __init__(self, data: initialData):
+class MonomialBasis():
+    def __init__(self, data: InitialData):
         n = data.n
 
         monomials = [Monomial(())]
@@ -53,13 +57,25 @@ def vec(S):
     S[range(n), range(n)] /= np.sqrt(2)
     return S[np.triu_indices(n)]
 
-# Vec as above for sparse dok matrices (significantly slower than above function)
+# Vec as above for sparse matrices (only works for matrices with no diagonal elements) - much faster than 
 def sparseToVec(S):
     n = S.shape[0]
-    S = sparse.dok_matrix.copy(S)
-    S *= math.sqrt(2)
-    S[range(n), range(n)] /= math.sqrt(2)
-    return S[np.triu_indices(n)]
+
+    # Obtaining lower triangular elements
+    S = sparse.tril(sparse.coo_matrix(S, copy=True), -1)
+
+    # Creating coo format sparse vector of flattened matrix
+    veclen = int(n*(n+1)/2)
+    rows = [int(n*(n+1)/2 - (n-c)*(n-c+1)/2 + r-c) for r,c in zip(S.row, S.col)]
+    cols = [0]*S.nnz
+    data = []
+    for k in range(len(S.data)):
+        if S.row[k] == S.col[k]:
+            data.append(S.data[k])
+        else:
+            data.append(math.sqrt(2)*S.data[k])
+    M = sparse.coo_matrix((data, (rows, cols)), shape = (veclen, 1))
+    return M
 
 # The mat function as documented in api/cones (weird scs input format)
 def mat(s):
@@ -70,6 +86,8 @@ def mat(s):
     S[range(n), range(n)] /= np.sqrt(2)
     return S
 
+
+# Functions for generating SDP for level 2 hierarchy
 def generate_A(data, basis):
     dim = data.dim
     tot = data.tot
@@ -85,9 +103,9 @@ def generate_A(data, basis):
             matrices[index][j,i] = 1
 
     # Converting these matrices to vector form (see required scs input format)
-    vectors = [sparse.dok_matrix((math.comb(dim+1,2),1)) for _ in range(tot)]
+    vectors = [sparse.csc_matrix((math.comb(dim+1,2),1)) for _ in range(tot)]
     for i in range(tot):
-        vectors[i] = sparse.csc_matrix(vec(matrices[i+1].toarray()).reshape(-1,1))
+        vectors[i] = sparse.csc_matrix(sparseToVec(matrices[i+1]))
     A = sparse.csc_matrix(-sparse.hstack(vectors))
     print('Finished generating A')
     return A
@@ -115,14 +133,34 @@ def generate_c(data, basis):
     print('Finished generating c')
     return c
 
-class Problem():
-    def __init__(self, data, basis):
+
+# SDP problem class
+
+class SDPRelaxation():
+    def __init__(self, data: InitialData):
+        self.data = data
+        self.basis = MonomialBasis(data)
+
         self.P = None
-        self.A = generate_A(data, basis)
-        self.b = generate_b(data)
-        self.c = generate_c(data, basis)
+        self.A = None
+        self.b = None
+        self.c = None
+    
+    def generate_A(self):
+        self.A = generate_A(self.data, self.basis)
+    
+    def generate_b(self):
+        self.b = generate_b(self.data)
+    
+    def generate_c(self):
+        self.c = generate_c(self.data, self.basis)
+
+    def build(self):
+        self.A = generate_A(self.data, self.basis)
+        self.b = generate_b(self.data)
+        self.c = generate_c(self.data, self.basis)
         self.vars = dict(P=self.P, A=self.A, b=self.b, c=self.c)
-        self.cone = dict(s=data.dim)
+        self.cone = dict(s=self.data.dim)
 
     def solve(self, eps_abs=1e-5, eps_rel=1e-5):
         solver = scs.SCS(self.vars, self.cone, eps_abs=eps_abs, eps_rel=eps_rel)

@@ -7,49 +7,63 @@ import math
 
 # NB for a monomial with word of length 1 e.g. chi_1, input must be (1,)
 class Monomial():
-    def __init__(self, word: tuple):
+    def __init__(self, word: list):
         self.word = word
 
 # Converts <chi^S psi, chi^T psi> to +-<psi, chi^symdif(S,T) psi> with the correct sign
 # NB monomial words must be sorted
 def q_mult(mon1: Monomial, mon2: Monomial):
+    # Creating resultant chi^symdif(S,T) monomial
     mon1word, mon2word = mon1.word, mon2.word
-    resword = tuple(sorted(set(mon1word) ^ set(mon2word)))
+    resword = sorted(set(mon1word) ^ set(mon2word))
 
-    mon1word, mon2word = list(mon1word), list(mon2word)
+    # Calculating the correct sign - this is done by performing a merge sort on mon1word, mon2word whilst counting the number of inversions in the array
     l = len(mon1word)
     count = int(l*(l-1)/2)
-    while mon1word and mon2word:
-        if mon1word[-1] <= mon2word[-1]:
-            mon2word.pop()
+
+    i,j = len(mon1word) - 1, len(mon2word) - 1
+    curlen = len(mon2word)
+    while i >= 0 and j >= 0:
+        if mon1word[i] <= mon2word[j]:
+            j -=1
+            curlen -=1
         else:
-            mon1word.pop()
-            count += len(mon2word)
+            i -=1
+            count += curlen
     
     return Monomial(resword), count%2
 
 # Preliminary data for problem
-class initialData():
-    def __init__(self, n):
+class InitialData():
+    def __init__(self, n, a=None):
         self.n = n
-
         self.dim = int(1 + n*(n-1)/2)
         self.tot = int(n*(n-1)/2 + n*(n-1)*(n-2)*(n-3)/24)
 
-class Basis():
-    def __init__(self, data: initialData):
+        if a is None:
+            self.a = np.random.randn(self.tot)
+        else:
+            self.a = a
+
+class MonomialBasis():
+    def __init__(self, data: InitialData):
         n = data.n
 
-        monomials = [Monomial(())]
+        monomials = [Monomial([])]
         for i in range(1,n+1):
             for j in range(i+1,n+1):
-                monomials.append(Monomial((i,j)))
+                monomials.append(Monomial([i,j]))
         self.monomials = monomials
 
+        # Can replace order dictionary with a formula for monomial order
         order = {}
+
+        # Actually don't need deg2 monomials since they give antisymmetric A matrices
         for i in range(1,n+1):
             for j in range(i+1,n+1):
                 order[(i,j)] = len(order)+1
+
+        # Fix up for when hierarchy level is changed
         for i in range(1,n+1):
             for j in range(i+1,n+1):
                 for k in range(j+1,n+1):
@@ -65,13 +79,25 @@ def vec(S):
     S[range(n), range(n)] /= np.sqrt(2)
     return S[np.triu_indices(n)]
 
-'''# Vec as above for sparse dok matrices (significantly slower than above function)
+# Vec as above for sparse matrices (only works for matrices with no diagonal elements) - much faster than 
 def sparseToVec(S):
     n = S.shape[0]
-    S = sparse.dok_matrix.copy(S)
-    S *= math.sqrt(2)
-    S[range(n), range(n)] /= math.sqrt(2)
-    return S[np.triu_indices(n)]'''
+
+    # Obtaining lower triangular elements
+    S = sparse.tril(sparse.coo_matrix(S, copy=True), -1)
+
+    # Creating coo format sparse vector of flattened matrix
+    veclen = int(n*(n+1)/2)
+    rows = [int(n*(n+1)/2 - (n-c)*(n-c+1)/2 + r-c) for r,c in zip(S.row, S.col)]
+    cols = [0]*S.nnz
+    data = []
+    for k in range(len(S.data)):
+        if S.row[k] == S.col[k]:
+            data.append(S.data[k])
+        else:
+            data.append(math.sqrt(2)*S.data[k])
+    M = sparse.coo_matrix((data, (rows, cols)), shape = (veclen, 1))
+    return M
 
 # The mat function as documented in api/cones (weird scs input format)
 def mat(s):
@@ -96,10 +122,9 @@ def generate_A(data, basis):
         for j in range(i+1,dim):
             if q_mult(monomials[i],monomials[j])[1] == q_mult(monomials[j],monomials[i])[1]:
                 temp, sgn = q_mult(monomials[i], monomials[j])
-                temp = temp.word
+                temp = tuple(temp.word)
 
                 index = order[temp]
-                print(monomials[i].word, monomials[j].word, temp, sgn)
                 if sgn == 0:
                     matrices[index][i,j] = 1
                     matrices[index][j,i] = 1
@@ -108,9 +133,9 @@ def generate_A(data, basis):
                     matrices[index][j,i] = -1
 
     # Converting these matrices to vector form (see required scs input format)
-    vectors = [sparse.dok_matrix((math.comb(dim+1,2),1)) for _ in range(tot)]
+    vectors = [sparse.csc_matrix((math.comb(dim+1,2),1)) for _ in range(tot)]
     for i in range(tot):
-        vectors[i] = sparse.csc_matrix(vec(matrices[i+1].toarray()).reshape(-1,1))
+        vectors[i] = sparse.csc_matrix(sparseToVec(matrices[i+1]))
     A = sparse.csc_matrix(-sparse.hstack(vectors))
     print('Finished generating A')
     return A
@@ -124,29 +149,45 @@ def generate_b(data):
 def generate_c(data, basis):
     tot = data.tot
     order = basis.order
-    monomials = basis.monomials
+    a = data.a
 
     # Constructing cost vector c
     c = np.zeros(tot)
-    a_coeffs = np.random.randn(tot)
     for tuple, index in order.items():
         if len(tuple) == 4:
-            c[index - 1] = a_coeffs[index - 1]
+            c[index - 1] = a[index - 1]
     c = np.hstack(c)
     print('Finished generating c')
     return c
 
 
 # SDP problem class
+    
+class SDPRelaxation():
+    def __init__(self, data: InitialData):
+        self.data = data
+        self.basis = MonomialBasis(data)
 
-class Problem():
-    def __init__(self, data, basis):
         self.P = None
-        self.A = generate_A(data, basis)
-        self.b = generate_b(data)
-        self.c = generate_c(data, basis)
+        self.A = None
+        self.b = None
+        self.c = None
+    
+    def generate_A(self):
+        self.A = generate_A(self.data, self.basis)
+    
+    def generate_b(self):
+        self.b = generate_b(self.data)
+    
+    def generate_c(self):
+        self.c = generate_c(self.data, self.basis)
+
+    def build(self):
+        self.A = generate_A(self.data, self.basis)
+        self.b = generate_b(self.data)
+        self.c = generate_c(self.data, self.basis)
         self.vars = dict(P=self.P, A=self.A, b=self.b, c=self.c)
-        self.cone = dict(s=data.dim)
+        self.cone = dict(s=self.data.dim)
 
     def solve(self, eps_abs=1e-5, eps_rel=1e-5):
         solver = scs.SCS(self.vars, self.cone, eps_abs=eps_abs, eps_rel=eps_rel)
