@@ -39,7 +39,7 @@ class InitialData():
     def __init__(self, n, a=None):
         self.n = n
         self.dim = int(1 + math.comb(n,1) + math.comb(n,2) + math.comb(n,3))
-        self.tot = int(math.comb(n,1) + math.comb(n,2) + math.comb(n,3) + math.comb(n,4) + math.comb(n,5) + math.comb(n,6))
+        self.tot = int(math.comb(n,4))
 
         if a is None:
             self.a = np.random.randn(self.tot)
@@ -61,10 +61,9 @@ class MonomialBasis():
 
         # Can replace order dictionary with a formula for monomial order
         order = {}
-        for i in range(1,7):
-            mons = itertools.combinations(arr, i)
-            for mon in mons:
-                order[mon] = len(order) + 1
+        mons = itertools.combinations(arr, 4)
+        for mon in mons:
+            order[mon] = len(order) + 1
 
         self.order = order
 
@@ -118,7 +117,7 @@ def generate_A(data, basis):
     for i in range(dim):
         for j in range(i+1,dim):
             temp, sgn = q_mult(monomials[i],monomials[j])
-            if len(temp.word)%4 == 0 or len(temp.word)%4 == 1:
+            if len(temp.word)%4 == 0:
                 temp = tuple(temp.word)
 
                 index = order[temp]
